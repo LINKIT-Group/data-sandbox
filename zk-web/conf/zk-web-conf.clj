@@ -7,6 +7,3 @@
          }
  :default-node "zoo1:2181" ;; optional
  }
-{
- :server-port 8080
-}
