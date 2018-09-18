@@ -1,0 +1,212 @@
+version: '3.5' # version 3.5 supports custom name for default network
+
+volumes:
+  namenode-data:
+  db:
+  kafka1-data:  
+  kafka2-data:
+  kafka3-data:
+  zoo1-data:
+  zoo1-log:
+  zoo2-data:
+  zoo2-log:
+  zoo3-data:
+  zoo3-log:
+
+services:
+  hadoop-nn:
+    build:
+      context: hadoop
+      args:
+        hadoop_role: namenode
+    hostname: hadoop-nn
+    volumes:
+      - namenode-data:/opt/hadoop/data
+    ports:
+      - 9870:9870 # NameNode GUI
+    environment:
+      CLUSTER_NAME: hdp-test
+  hadoop-rm:
+    build:
+      context: hadoop
+      args:
+        hadoop_role: resourcemanager
+    hostname: hadoop-rm
+    ports:
+      - 8088:8088 # ResourceManager GUI
+  hadoop-dn:
+    build:
+      context: hadoop
+    depends_on:
+      - hadoop-nn
+      - hadoop-rm
+
+  db:
+    image: postgres:latest
+    volumes:
+      - db:/var/lib/postgresql/data
+      - ./hive/conf/metastore/init.sql:/docker-entrypoint-initdb.d/hive.sql
+    ports:
+      - 5432 # for debugging
+    environment:
+      POSTGRES_PASSWORD: secret
+
+  hive-metastore: 
+    build:
+      context: hive
+    hostname: hive-metastore
+    container_name: hive-metastore # docker-compose generates container names with underscores (invalid hostnames)
+    depends_on:
+      - db 
+      - hadoop-dn
+  hive-server: 
+    build:
+      context: hive
+      args: 
+        hive_role: server
+    hostname: hive-server
+    ports:
+      - 10002:10002 # Hiveserver2 GUI
+    environment:
+      HIVE_ROLE: server
+    depends_on:
+      - hive-metastore
+
+  hbase-regionserver:
+    build:
+      context: hbase
+    environment:
+      HBASE_ROLE: regionserver
+    depends_on:
+      - hadoop-dn
+      - zoo1
+      - zoo2
+      - zoo3
+  hbase-master:
+    build:
+      context: hbase
+    ports:
+      - 16010:16010 # HBase Web UI
+    environment:
+      HBASE_ROLE: master
+    depends_on:
+      - hadoop-dn
+      - zoo1
+      - zoo2
+      - zoo3
+
+  edge-spark:
+    build:
+      context: edge-spark
+    ports:
+      - 4040:4040
+    volumes:
+      - ./edge-spark/input:/opt/hadoop/spark/input
+    depends_on: 
+      - hive-server
+
+  hue:
+    image: gethue/hue:latest
+    ports: 
+      - 8889:8888
+    volumes:
+      - ./hue/conf/hue.ini:/hue/desktop/conf/pseudo-distributed-custom.ini
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:latest
+    ports:
+      - 8081:8081
+    hostname: schema-registry
+    environment:
+     SCHEMA_REGISTRY_HOST_NAME: schema-registry
+     SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL: zoo1:2181,zoo2:2181,zoo3:2181/kafka
+     SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka1:9095
+    depends_on: 
+      - kafka1
+      - kafka2
+      - kafka3
+
+  kafka1:
+    build: 
+      context: kafka
+    ports:
+      - 9092:9092
+    volumes:
+      - kafka1-data:/opt/kafka/data
+    environment:
+      BROKER_ID: 1
+      ZOOKEEPER_CONNECT: zoo1:2181,zoo2:2181,zoo3:2181/kafka
+      PORT: 9092
+    depends_on:
+      - zoo1
+      - zoo2
+      - zoo3
+  kafka2:
+    build: 
+      context: kafka
+    ports:
+      - 9093:9093
+    environment:
+      BROKER_ID: 2
+      ZOOKEEPER_CONNECT: zoo1:2181,zoo2:2181,zoo3:2181/kafka
+      PORT: 9093
+    depends_on:
+      - zoo1
+      - zoo2
+      - zoo3
+  kafka3:
+    build: 
+      context: kafka
+    ports:
+      - 9094:9094
+    environment:
+      BROKER_ID: 3
+      ZOOKEEPER_CONNECT: zoo1:2181,zoo2:2181,zoo3:2181/kafka
+      PORT: 9094
+    depends_on:
+      - zoo1
+      - zoo2
+      - zoo3
+
+  zoo1:
+    image: zookeeper
+    restart: always
+    hostname: zoo1
+    volumes:
+      - zoo1-data:/data
+      - zoo1-log:/datalog
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_SERVERS: server.1=0.0.0.0:2888:3888 server.2=zoo2:2888:3888 server.3=zoo3:2888:3888
+  zoo2:
+    image: zookeeper
+    restart: always
+    hostname: zoo2
+    volumes:
+      - zoo2-data:/data
+      - zoo2-log:/datalog
+    environment:
+      ZOO_MY_ID: 2
+      ZOO_SERVERS: server.1=zoo1:2888:3888 server.2=0.0.0.0:2888:3888 server.3=zoo3:2888:3888
+  zoo3:
+    image: zookeeper
+    restart: always
+    hostname: zoo3
+    volumes:
+      - zoo3-data:/data
+      - zoo3-log:/datalog
+    environment:
+      ZOO_MY_ID: 3
+      ZOO_SERVERS: server.1=zoo1:2888:3888 server.2=zoo2:2888:3888 server.3=0.0.0.0:2888:3888
+  zk-web:
+    image: tobilg/zookeeper-webui
+    ports:
+      - 8888:8080
+    volumes:
+      - ./zk-web/conf:/app/zk-web/conf
+    depends_on:
+      - zoo1   
+
+networks: 
+  default:
+    name: datastack

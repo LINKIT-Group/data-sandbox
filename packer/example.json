@@ -1,0 +1,56 @@
+{
+    "variables": {
+      "aws_region": "eu-west-1",
+      "hadoop_version": "3.1.1",
+      "spark_version": "2.3.1"
+    },
+    "builders": [{
+      "type": "amazon-ebs",
+      "region": "{{ user `aws_region` }}",
+      "source_ami_filter": {
+        "filters": {
+        "virtualization-type": "hvm",
+        "name": "ubuntu/images/*ubuntu-xenial-16.04-amd64-server-*",
+        "root-device-type": "ebs"
+        },
+        "owners": ["099720109477"],
+        "most_recent": true
+      },
+      "instance_type": "t2.micro",
+      "ssh_username": "ubuntu",
+      "ami_name": "packer-spark {{timestamp}}"
+    }],
+    "provisioners": [
+      {
+        "type": "file",
+        "source": "../spark/scripts/common.sh",
+        "destination": "/tmp/common.sh"
+      },
+      {
+        "type": "shell",
+        "execute_command": "sudo sh -c '{{ .Vars }} {{ .Path }}'",
+        "inline": [
+          "mkdir -p /opt/hadoop",
+          "useradd -d /opt/hadoop hadoop",
+          "chown -R hadoop:hadoop /opt/hadoop",
+          "apt update",
+          "apt install -y --no-install-recommends ca-certificates curl rsync ssh openjdk-8-jdk net-tools jq"
+        ]
+      },
+      {
+        "type": "shell",
+        "environment_vars": [
+          "INSTALL_ROOT=/opt/hadoop",
+          "JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64",
+          "HADOOP_VERSION={{user `hadoop_version`}}",
+          "HADOOP_HOME=/opt/hadoop/hadoop-{{user `hadoop_version`}}",
+          "HADOOP_CONF_DIR=/opt/hadoop/hadoop-{{user `hadoop_version`}}/etc/hadoop",
+          "SPARK_VERSION={{user `spark_version`}}",
+          "SPARK_HOME=/opt/hadoop/spark"
+        ],
+        "execute_command": "sudo sh -c '{{ .Vars }} {{ .Path }}'",
+        "script": "../spark/scripts/install.sh",
+        "remote_folder": "/tmp"
+      }
+    ]
+  }
